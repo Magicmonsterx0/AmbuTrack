@@ -19,13 +19,27 @@ connectDB();
 const app = express();
 const httpServer = createServer(app);
 
-app.use(cors({ origin: 'http://localhost:5173' }));
+// 1. Define who is allowed to talk to your backend
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://YOUR_VERCEL_URL.vercel.app' // 🟢 Paste your exact Vercel URL here!
+];
+
+// 2. Update Express CORS
+app.use(cors({
+    origin: allowedOrigins,
+    credentials: true
+}));
 app.use(express.json());
 app.use('/api/fleet', fleetRoutes);
 app.use('/api/auth', authRoutes);
 
-const io = new Server(httpServer, {
-    cors: { origin: 'http://localhost:5173', methods: ['GET', 'POST'] }
+// 3. Update Socket.io CORS
+const io = new Server(server, {
+    cors: {
+        origin: allowedOrigins,
+        methods: ["GET", "POST"]
+    }
 });
 
 // Real-Time WebSocket Logic
