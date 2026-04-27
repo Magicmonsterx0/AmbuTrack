@@ -22,7 +22,7 @@ const httpServer = createServer(app);
 // 1. Define who is allowed to talk to your backend
 const allowedOrigins = [
     'http://localhost:5173',
-    'https://YOUR_VERCEL_URL.vercel.app' // 🟢 Paste your exact Vercel URL here!
+    'https://ambutrack.vercel.app' // 🟢 Paste your exact Vercel URL here!
 ];
 
 // 2. Update Express CORS
@@ -35,7 +35,7 @@ app.use('/api/fleet', fleetRoutes);
 app.use('/api/auth', authRoutes);
 
 // 3. Update Socket.io CORS
-const io = new Server(server, {
+const io = new Server(httpServer, {
     cors: {
         origin: allowedOrigins,
         methods: ["GET", "POST"]
@@ -163,5 +163,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
-    console.log(`🚑 AmbuTrack Backend running on http://localhost:${PORT}`);
+    console.log(`🚑 AmbuTrack Backend running on port:${PORT}`);
 });
