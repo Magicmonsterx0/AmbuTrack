@@ -22,7 +22,8 @@ const httpServer = createServer(app);
 // 1. Define who is allowed to talk to your backend
 const allowedOrigins = [
     'http://localhost:5173',
-    'https://ambutrack.vercel.app' // 🟢 Paste your exact Vercel URL here!
+    'https://ambutrack.vercel.app',
+    'https://ambutrack-jb3yrp5ep-magicmonsterx0s-projects.vercel.app'
 ];
 
 // 2. Update Express CORS
