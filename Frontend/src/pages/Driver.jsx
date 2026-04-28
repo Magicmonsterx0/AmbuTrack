@@ -6,6 +6,7 @@ const Driver = () => {
     const [status, setStatus] = useState("Offline");
     const [incomingRide, setIncomingRide] = useState(null);
     const [isOnline, setIsOnline] = useState(false);
+    const [watchId, setWatchId] = useState(null);
 
     // State to hold the GPS coordinates for the map
     const [myLocation, setMyLocation] = useState(null);
@@ -45,7 +46,7 @@ const Driver = () => {
                 setStatus("Online - Transmitting Live GPS");
 
                 // Broadcast live location through the secure tunnel
-                socket.emit('go-online', {
+                socket.emit('update-location', {
                     driverId: socket.id,
                     plateNumber: localStorage.getItem('plateNumber'),
                     location: { lat, lng },
@@ -63,6 +64,12 @@ const Driver = () => {
                 timeout: 10000 // 10 seconds to find a signal
             }
         );
+        socket.emit('go-online', {
+            driverId: socket.id,
+            plateNumber: localStorage.getItem('plateNumber'),
+            location: { lat, lng },
+            token: localStorage.getItem('token')
+        });
 
         setWatchId(id); // Save the ID so we can stop tracking when they go offline
     };

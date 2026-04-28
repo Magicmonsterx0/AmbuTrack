@@ -19,6 +19,9 @@ const vehicleSchema = new mongoose.Schema({
     currentLocation: {
         lat: { type: Number, default: 0 },
         lng: { type: Number, default: 0 }
+    },
+    socketId: {
+        type: String
     }
 }, {
     timestamps: true // Automatically adds createdAt and updatedAt dates

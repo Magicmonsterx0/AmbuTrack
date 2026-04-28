@@ -23,7 +23,8 @@ const httpServer = createServer(app);
 const allowedOrigins = [
     'http://localhost:5173',
     'https://ambutrack.vercel.app',
-    'https://ambutrack-jb3yrp5ep-magicmonsterx0s-projects.vercel.app'
+    'https://ambutrack-jb3yrp5ep-magicmonsterx0s-projects.vercel.app',
+    /\.vercel\.app$/
 ];
 
 // 2. Update Express CORS
@@ -96,12 +97,12 @@ io.on('connection', (socket) => {
     // 3. DRIVER ACCEPTS RIDE
     socket.on('accept-ride', async (data) => {
         console.log(`✅ Driver accepted ride for Patient: ${data.patientId}`);
-        io.to(data.patientId).emit('ride-accepted', { driverLocation: data.driverLocation });
+        io.to(data.patientId).emit('ride-accepted', { driverLocation: data.driverLocation, driverPlate: data.plateNumber });
 
         try {
             // Update MongoDB to show this ambulance is currently busy on a rescue!
             await Vehicle.findOneAndUpdate(
-                { plateNumber: "UP16-AM-001" }, // Hardcoded for our test driver
+                { plateNumber: data.plateNumber },
                 { status: 'Dispatched' }
             );
         } catch (error) {
