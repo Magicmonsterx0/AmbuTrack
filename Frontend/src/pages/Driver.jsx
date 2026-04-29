@@ -8,17 +8,13 @@ const Driver = () => {
     const [isOnline, setIsOnline] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
 
-    // GPS coordinates for the map
     const [myLocation, setMyLocation] = useState(null);
-    const [targetLocation, setTargetLocation] = useState(null);  // patient location
+    const [targetLocation, setTargetLocation] = useState(null);
     const [activePatientId, setActivePatientId] = useState(null);
 
-    // FIX: watchId stored in a ref so it persists across renders without
-    // causing re-renders itself, and so we can clear it on unmount.
+    // Ref so clearing the GPS watch doesn't cause a re-render
     const watchIdRef = useRef(null);
-
-    // FIX: sentOnline flag — ensures we only emit go-online ONCE when GPS
-    // first locks in, not on every subsequent position update.
+    // Prevents go-online from emitting on every GPS tick — fires only once
     const sentOnlineRef = useRef(false);
 
     const plateNumber = localStorage.getItem('plateNumber');
@@ -26,56 +22,60 @@ const Driver = () => {
     const token = localStorage.getItem('token');
 
     // -------------------------------------------------------------------------
-    // Socket lifecycle — connect on mount, disconnect on unmount.
-    // FIX: Without this, the socket was never explicitly connected (autoConnect
-    // is false in socket.js), so no events were received at all in production.
+    // Socket lifecycle
     // -------------------------------------------------------------------------
     useEffect(() => {
-        // Connect the shared socket instance
         socket.connect();
 
         socket.on('connect', () => {
             setIsConnected(true);
-            console.log('🔌 Socket connected:', socket.id);
+            console.log('🔌 Driver socket connected:', socket.id);
         });
 
         socket.on('disconnect', () => {
             setIsConnected(false);
             setIsOnline(false);
-            sentOnlineRef.current = false; // allow re-registration after reconnect
+            sentOnlineRef.current = false;
             setStatus('Disconnected — reconnecting...');
         });
 
-        // When the backend verifies the JWT and something goes wrong
         socket.on('auth-error', (data) => {
             alert(`Security error: ${data.message}. Please log in again.`);
         });
 
-        // Incoming dispatch from a patient
         socket.on('incoming-ride', (data) => {
             setIncomingRide(data);
             setStatus('🚨 INCOMING DISPATCH 🚨');
         });
 
-        // Cleanup: remove listeners and disconnect when leaving the page
         return () => {
             socket.off('connect');
             socket.off('disconnect');
             socket.off('auth-error');
             socket.off('incoming-ride');
             socket.disconnect();
-
-            // Stop watching GPS position
-            if (watchIdRef.current !== null) {
-                navigator.geolocation.clearWatch(watchIdRef.current);
-            }
+            stopGPS();
         };
     }, []);
 
     // -------------------------------------------------------------------------
-    // GO ONLINE — starts GPS tracking.
-    // FIX: go-online is emitted only once (first GPS lock).
-    // Subsequent position updates use the lightweight update-location event.
+    // Stop GPS helper — called by Go Offline and on unmount
+    // -------------------------------------------------------------------------
+    const stopGPS = () => {
+        if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // GO ONLINE
+    // First GPS fix → emit go-online (join room, write to DB, verify JWT once)
+    // Every subsequent fix → emit update-location (no JWT, just DB update)
+    //
+    // myLocation is updated on EVERY tick so the map marker moves in real time.
+    // When targetLocation is also set (en route to patient), MapView's Routing
+    // component receives the new source coordinate and redraws the route line.
     // -------------------------------------------------------------------------
     const handleGoOnline = () => {
         if (!navigator.geolocation) {
@@ -89,47 +89,49 @@ const Driver = () => {
             (position) => {
                 const lat = position.coords.latitude;
                 const lng = position.coords.longitude;
+
+                // Update the map marker on every single tick (real-time movement)
                 setMyLocation([lat, lng]);
 
                 if (!sentOnlineRef.current) {
-                    // First lock — register with the server as an active driver
+                    // First lock — register with server
                     sentOnlineRef.current = true;
                     setIsOnline(true);
                     setStatus('Online — Monitoring for emergencies');
-
-                    socket.emit('go-online', {
-                        plateNumber,
-                        location: { lat, lng },
-                        token,
-                    });
+                    socket.emit('go-online', { plateNumber, location: { lat, lng }, token });
                 } else {
-                    // Subsequent ticks — just silently update the DB location
-                    socket.emit('update-location', {
-                        plateNumber,
-                        location: { lat, lng },
-                    });
+                    // Every subsequent tick — just update DB location
+                    socket.emit('update-location', { plateNumber, location: { lat, lng } });
                 }
             },
             (error) => {
                 console.error('GPS Error:', error);
                 setStatus('Error: Could not lock GPS signal.');
             },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 10000,
-            }
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
 
-        // FIX: Store in ref so we can clear it on unmount
         watchIdRef.current = id;
     };
 
     // -------------------------------------------------------------------------
+    // GO OFFLINE — explicit button click while online and not on a rescue
+    // Stops GPS, emits go-offline so server leaves the room + marks DB Offline
+    // -------------------------------------------------------------------------
+    const handleGoOffline = () => {
+        stopGPS();
+        sentOnlineRef.current = false;
+        setIsOnline(false);
+        setMyLocation(null);
+        setStatus('Offline');
+
+        socket.emit('go-offline', { plateNumber, token });
+    };
+
+    // -------------------------------------------------------------------------
     // ACCEPT RIDE
-    // FIX: token is now sent so the server can verify identity and use the
-    // correct plate number (no more hardcoded plate in server.js).
-    // targetLocation is set so MapView draws the route line to the patient.
+    // Sets targetLocation → MapView immediately draws the route to the patient.
+    // As myLocation updates (driver moves), the route redraws automatically.
     // -------------------------------------------------------------------------
     const acceptRide = () => {
         if (!incomingRide) return;
@@ -140,17 +142,15 @@ const Driver = () => {
 
         socket.emit('accept-ride', {
             patientId: incomingRide.patientId,
-            driverLocation: myLocation
-                ? { lat: myLocation[0], lng: myLocation[1] }
-                : null,
-            token,  // FIX: server now verifies identity here too
+            driverLocation: myLocation ? { lat: myLocation[0], lng: myLocation[1] } : null,
+            token,
         });
 
         setIncomingRide(null);
     };
 
     // -------------------------------------------------------------------------
-    // COMPLETE RIDE — marks rescue done, logs it, resets state
+    // COMPLETE RIDE
     // -------------------------------------------------------------------------
     const completeRide = () => {
         socket.emit('complete-ride', {
@@ -172,24 +172,15 @@ const Driver = () => {
 
             {/* ----------------------------------------------------------------
                 RAPIDO-STYLE BOTTOM SHEET
-                Slides up from the bottom with the dispatch info.
-                Only renders when there is an incoming ride.
-                All original classes kept — only the layout changed.
             ---------------------------------------------------------------- */}
             {incomingRide && (
                 <>
-                    {/* Dark overlay behind the sheet */}
                     <div className="absolute inset-0 bg-black/50 z-40" />
-
-                    {/* The sheet itself — slides up from bottom */}
                     <div
                         className="absolute bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl shadow-2xl px-6 pt-4 pb-10"
                         style={{ animation: 'slideUp 0.35s cubic-bezier(0.32,0.72,0,1)' }}
                     >
-                        {/* Drag handle pill (visual only, like Rapido/Swiggy) */}
                         <div className="w-10 h-1 bg-surface-300 rounded-full mx-auto mb-5" />
-
-                        {/* Header */}
                         <div className="flex items-center gap-3 mb-1">
                             <span className="text-2xl">🚨</span>
                             <h2 className="text-xl font-extrabold text-red-600 tracking-tight">
@@ -199,8 +190,6 @@ const Driver = () => {
                         <p className="text-sm text-surface-500 mb-5 pl-9">
                             Patient is requesting immediate assistance.
                         </p>
-
-                        {/* Location info card */}
                         <div className="bg-surface-50 border border-surface-200 rounded-2xl p-4 mb-6 flex items-start gap-3">
                             <span className="text-lg mt-0.5">📍</span>
                             <div>
@@ -213,8 +202,6 @@ const Driver = () => {
                                 </p>
                             </div>
                         </div>
-
-                        {/* Action buttons */}
                         <div className="flex gap-3">
                             <button
                                 onClick={acceptRide}
@@ -233,8 +220,6 @@ const Driver = () => {
                             </button>
                         </div>
                     </div>
-
-                    {/* Keyframe for the slide-up animation */}
                     <style>{`
                         @keyframes slideUp {
                             from { transform: translateY(100%); }
@@ -245,24 +230,21 @@ const Driver = () => {
             )}
 
             {/* ----------------------------------------------------------------
-                LEFT PANEL — Status & controls (unchanged visuals)
+                LEFT PANEL
             ---------------------------------------------------------------- */}
             <aside className="w-full md:w-96 p-6 border-r border-surface-200 flex flex-col bg-white shadow-xl z-10">
                 <h2 className="text-3xl font-extrabold text-surface-900 mb-2">
                     Welcome, {driverName || 'Driver'}
                 </h2>
-                <p className="text-surface-600 mb-6 font-medium">
+                <p className="text-surface-600 mb-4 font-medium">
                     Assigned Vehicle:{' '}
                     <span className="text-blue-600 border border-blue-200 bg-blue-50 px-2 py-1 rounded-md">
                         {plateNumber || 'Unknown'}
                     </span>
                 </p>
 
-                {/* Connection indicator */}
                 <div className="flex items-center gap-2 mb-4">
-                    <span
-                        className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-400 animate-pulse'}`}
-                    />
+                    <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-400 animate-pulse'}`} />
                     <span className="text-xs text-surface-500 font-medium">
                         {isConnected ? 'Server connected' : 'Connecting to server...'}
                     </span>
@@ -276,6 +258,7 @@ const Driver = () => {
                 </div>
 
                 {!isOnline ? (
+                    // OFFLINE STATE — go online button
                     <button
                         onClick={handleGoOnline}
                         disabled={!isConnected}
@@ -284,6 +267,7 @@ const Driver = () => {
                         Go Online (Broadcast GPS)
                     </button>
                 ) : targetLocation ? (
+                    // EN ROUTE STATE — complete rescue button
                     <button
                         onClick={completeRide}
                         className="w-full font-bold py-4 rounded-xl text-white bg-blue-600 hover:bg-blue-700 transition-transform active:scale-95 shadow-lg animate-pulse"
@@ -291,14 +275,28 @@ const Driver = () => {
                         Complete Rescue (Drop off)
                     </button>
                 ) : (
-                    <div className="w-full font-bold py-4 rounded-xl text-green-700 bg-green-100 border border-green-300 text-center">
-                        Active &amp; Monitoring
+                    // ONLINE & WAITING STATE — status chip + go offline button
+                    <div className="flex flex-col gap-3">
+                        <div className="w-full font-bold py-4 rounded-xl text-green-700 bg-green-100 border border-green-300 text-center">
+                            Active &amp; Monitoring
+                        </div>
+                        {/* GO OFFLINE — was completely missing before */}
+                        <button
+                            onClick={handleGoOffline}
+                            className="w-full font-bold py-3 rounded-xl text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-transform active:scale-95"
+                        >
+                            Go Offline
+                        </button>
                     </div>
                 )}
             </aside>
 
             {/* ----------------------------------------------------------------
-                MAP — route line draws automatically when targetLocation is set
+                MAP
+                myLocation updates every GPS tick → green pin moves in real time.
+                targetLocation = patient's fixed pickup point (red pin).
+                MapView's Routing component receives the updated source on every
+                render and redraws the road route — so the line follows the driver.
             ---------------------------------------------------------------- */}
             <main className="grow relative p-4 z-0">
                 <MapView role="Driver" userLocation={myLocation} targetLocation={targetLocation} />

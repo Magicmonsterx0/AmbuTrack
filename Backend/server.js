@@ -30,15 +30,13 @@ app.use('/api/auth', authRoutes);
 
 const io = new Server(httpServer, {
     cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
-    // Allow falling back to long-polling if WebSocket is blocked (common on free hosting)
+    // Allow fallback to polling if WebSocket is blocked (common on free hosting)
     transports: ['websocket', 'polling'],
 });
 
-// ---------------------------------------------------------------------------
-// In-memory store: tracks active patient requests so we can notify the right
-// patient socket when a driver accepts.
-// Structure: { [patientSocketId]: { location, socketId } }
-// ---------------------------------------------------------------------------
+// In-memory map of active patient requests.
+// Key = patient's socket.id, Value = their location.
+// Used so we know which socket to notify when a driver accepts.
 const pendingRequests = {};
 
 io.on('connection', (socket) => {
@@ -46,8 +44,7 @@ io.on('connection', (socket) => {
 
     // -------------------------------------------------------------------------
     // DRIVER GOES ONLINE
-    // Verifies JWT, joins the 'active-drivers' room, updates DB status.
-    // FIX: We only update DB once here, not on every GPS tick.
+    // Verifies JWT once, joins 'active-drivers' room, writes to DB.
     // -------------------------------------------------------------------------
     socket.on('go-online', async (data) => {
         try {
@@ -57,36 +54,63 @@ io.on('connection', (socket) => {
 
             const decoded = jwt.verify(data.token, process.env.JWT_SECRET);
 
-            // Join the room that receives patient emergency broadcasts
+            // Join the room — io.to('active-drivers') reaches all online drivers
             socket.join('active-drivers');
 
-            // Save driver's current location AND socket ID so we can target them later
             await Vehicle.findOneAndUpdate(
                 { plateNumber: decoded.plateNumber },
                 {
                     status: 'Online',
-                    currentLocation: data.location,  // FIX: matches schema field name
-                    socketId: socket.id,              // FIX: schema now has this field
+                    currentLocation: data.location,
+                    socketId: socket.id,
                 },
                 { upsert: true }
             );
 
             console.log(`🚑 ${decoded.plateNumber} is Online.`);
-
-            // Tell the Fleet page to refresh its data
             io.emit('driver-status-updated');
 
         } catch (err) {
-            console.error('go-online auth error:', err.message);
+            console.error('go-online error:', err.message);
             socket.emit('auth-error', { message: 'Access Denied: Invalid Token' });
         }
     });
 
     // -------------------------------------------------------------------------
-    // DRIVER LOCATION UPDATE (called continuously by watchPosition)
-    // FIX: Separated from go-online so we don't re-verify JWT on every GPS tick.
-    // Just updates the DB location silently — no auth needed, socket already
-    // joined the room via go-online.
+    // DRIVER GOES OFFLINE (explicit — button click)
+    // Leaves the active-drivers room, marks vehicle Offline in DB.
+    // This is separate from disconnect so it works even when the browser tab
+    // stays open (disconnect only fires when the connection is actually lost).
+    // -------------------------------------------------------------------------
+    socket.on('go-offline', async (data) => {
+        try {
+            if (!data.token) {
+                return socket.emit('auth-error', { message: 'Access Denied: No Token' });
+            }
+
+            const decoded = jwt.verify(data.token, process.env.JWT_SECRET);
+
+            // Leave the dispatch room so new patient requests don't reach them
+            socket.leave('active-drivers');
+
+            await Vehicle.findOneAndUpdate(
+                { plateNumber: decoded.plateNumber },
+                { status: 'Offline', socketId: null }
+            );
+
+            console.log(`🔴 ${decoded.plateNumber} went Offline.`);
+            io.emit('driver-status-updated');
+
+        } catch (err) {
+            console.error('go-offline error:', err.message);
+            socket.emit('auth-error', { message: 'Access Denied: Invalid Token' });
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // DRIVER LOCATION UPDATE (fires on every GPS tick after go-online)
+    // No JWT verify here — socket membership in 'active-drivers' is enough proof.
+    // Just silently updates the DB. Cheap operation.
     // -------------------------------------------------------------------------
     socket.on('update-location', async (data) => {
         try {
@@ -101,31 +125,27 @@ io.on('connection', (socket) => {
 
     // -------------------------------------------------------------------------
     // PATIENT REQUESTS AMBULANCE
-    // FIX: We store the patient's socket ID in pendingRequests so when a driver
-    // accepts, we know exactly which socket to notify.
-    // We broadcast to 'active-drivers' room — only online drivers get this.
+    // Store patient socket ID server-side, then broadcast to all active drivers.
     // -------------------------------------------------------------------------
     socket.on('request-ambulance', (data) => {
-        console.log(`🚨 Emergency from patient ${socket.id} at`, data.location);
+        console.log(`🚨 Emergency from ${socket.id} at`, data.location);
 
-        // Remember this patient so we can reach them after driver accepts
+        // Remember this patient so we can route the driver's accept back to them
         pendingRequests[socket.id] = {
             location: data.location,
             socketId: socket.id,
         };
 
-        // Broadcast to every driver in the active-drivers room
-        // We attach the patient's socket ID so the driver can reference it on accept
+        // Only drivers in the 'active-drivers' room receive this
         io.to('active-drivers').emit('incoming-ride', {
-            patientId: socket.id,   // driver will send this back on accept
+            patientId: socket.id,
             location: data.location,
         });
     });
 
     // -------------------------------------------------------------------------
     // DRIVER ACCEPTS RIDE
-    // FIX: Use socket.to(patientSocketId) to send directly to that one patient.
-    // FIX: Plate number comes from JWT decode, not hardcoded.
+    // Verifies token, notifies the specific patient, marks vehicle Dispatched.
     // -------------------------------------------------------------------------
     socket.on('accept-ride', async (data) => {
         try {
@@ -134,26 +154,19 @@ io.on('connection', (socket) => {
             }
 
             const decoded = jwt.verify(data.token, process.env.JWT_SECRET);
-
             const { patientId, driverLocation } = data;
 
             console.log(`✅ ${decoded.plateNumber} accepted ride for patient ${patientId}`);
 
-            // FIX: socket.to() correctly sends to a specific socket ID
-            // (io.to() also works but socket.to() is the cleaner targeted call)
-            socket.to(patientId).emit('ride-accepted', {
-                driverLocation,  // Patient's map will draw a line to this point
-            });
+            // Send directly to that one patient socket
+            socket.to(patientId).emit('ride-accepted', { driverLocation });
 
-            // Mark vehicle as busy in the database
             await Vehicle.findOneAndUpdate(
                 { plateNumber: decoded.plateNumber },
                 { status: 'Dispatched' }
             );
 
-            // Clean up the pending request — it's been handled
             delete pendingRequests[patientId];
-
             io.emit('driver-status-updated');
 
         } catch (err) {
@@ -164,7 +177,7 @@ io.on('connection', (socket) => {
 
     // -------------------------------------------------------------------------
     // DRIVER COMPLETES RIDE
-    // Verifies JWT + plate match, notifies patient, logs to DB.
+    // Verifies token + plate match, notifies patient, logs to DB.
     // -------------------------------------------------------------------------
     socket.on('complete-ride', async (data) => {
         try {
@@ -174,24 +187,19 @@ io.on('connection', (socket) => {
 
             const decoded = jwt.verify(data.token, process.env.JWT_SECRET);
 
-            // Security: make sure the driver isn't completing someone else's rescue
             if (decoded.plateNumber !== data.plateNumber) {
-                console.warn(`⚠️ Plate mismatch: ${decoded.plateNumber} vs ${data.plateNumber}`);
                 return socket.emit('auth-error', { message: 'Access Denied: Vehicle mismatch' });
             }
 
-            console.log(`🏁 Rescue completed by ${decoded.plateNumber} for patient ${data.patientId}`);
+            console.log(`🏁 ${decoded.plateNumber} completed rescue for ${data.patientId}`);
 
-            // Notify the patient their ride is done
             socket.to(data.patientId).emit('ride-completed');
 
-            // Set vehicle back to available
             await Vehicle.findOneAndUpdate(
                 { plateNumber: data.plateNumber },
                 { status: 'Online' }
             );
 
-            // Write the permanent dispatch record
             await new DispatchLog({
                 patientId: data.patientId,
                 vehiclePlate: data.plateNumber,
@@ -199,7 +207,6 @@ io.on('connection', (socket) => {
                 status: 'Completed',
             }).save();
 
-            console.log(`📝 Dispatch log saved for ${data.plateNumber}`);
             io.emit('driver-status-updated');
 
         } catch (err) {
@@ -209,24 +216,23 @@ io.on('connection', (socket) => {
     });
 
     // -------------------------------------------------------------------------
-    // DISCONNECT — clean up any pending requests from this socket
+    // DISCONNECT (tab closed / network lost)
+    // Auto-marks vehicle Offline so the DB never gets stuck in Online state.
     // -------------------------------------------------------------------------
     socket.on('disconnect', async () => {
         console.log(`❌ Disconnected: ${socket.id}`);
 
-        // If a patient disconnects, remove their pending request
         if (pendingRequests[socket.id]) {
             delete pendingRequests[socket.id];
         }
 
-        // If a driver disconnects, mark their vehicle offline
         try {
             const updated = await Vehicle.findOneAndUpdate(
                 { socketId: socket.id },
                 { status: 'Offline', socketId: null }
             );
             if (updated) {
-                console.log(`🚑 ${updated.plateNumber} marked Offline.`);
+                console.log(`🚑 ${updated.plateNumber} auto-marked Offline.`);
                 io.emit('driver-status-updated');
             }
         } catch (err) {
