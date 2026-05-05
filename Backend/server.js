@@ -30,22 +30,23 @@ app.use('/api/auth', authRoutes);
 
 const io = new Server(httpServer, {
     cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
-    // Allow fallback to polling if WebSocket is blocked (common on free hosting)
+    // Allow fallback to polling if WebSocket is blocked
     transports: ['websocket', 'polling'],
 });
 
 // In-memory map of active patient requests.
 // Key = patient's socket.id, Value = their location.
-// Used so we know which socket to notify when a driver accepts.
+// Used to know which socket to notify when a driver accepts.
 const pendingRequests = {};
 
 io.on('connection', (socket) => {
     console.log(`🔌 Connected: ${socket.id}`);
 
-    // -------------------------------------------------------------------------
-    // DRIVER GOES ONLINE
-    // Verifies JWT once, joins 'active-drivers' room, writes to DB.
-    // -------------------------------------------------------------------------
+    /*
+    DRIVER GOES ONLINE
+    Verifies JWT once, joins 'active-drivers' room, writes to DB.
+    */
+    
     socket.on('go-online', async (data) => {
         try {
             if (!data.token) {

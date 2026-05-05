@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Bell, User, Moon } from 'lucide-react';
+import { User } from 'lucide-react';
 
 const Navbar = () => {
     const location = useLocation();
@@ -26,16 +26,9 @@ const Navbar = () => {
 
             {/*icons*/}
             <div className="flex items-center gap-4 text-zinc-600">
-                <button className="hover:text-green-500 transition-colors">
-                    <Bell size={20} />
-                </button>
                 <Link to="/login" className="p-2 hover:bg-orange-600 rounded-full transition-colors hidden sm:block">
                     <User className="w-5 h-5" />
                 </Link>
-                {/*toggel theme here*/}
-                <button className="p-2 rounded-full border-zinc-200 hover:bg-zinc-100 transition-colors">
-                    <Moon size={18} />
-                </button>
             </div>
         </nav>
     );

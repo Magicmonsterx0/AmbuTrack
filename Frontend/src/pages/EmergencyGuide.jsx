@@ -1,4 +1,5 @@
-import { ShieldAlert, PhoneCall, HeartPulse, Activity } from 'lucide-react'; // Make sure to run: npm install lucide-react
+import { ShieldAlert, PhoneCall, HeartPulse, Activity } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const EmergencyGuide = () => {
     const guides = [
@@ -70,10 +71,13 @@ const EmergencyGuide = () => {
                         <h3 className="text-2xl font-bold text-white mb-2">Need immediate assistance?</h3>
                         <p className="text-blue-100">Our dispatch servers are monitoring your area 24/7.</p>
                     </div>
-                    <button className="flex items-center gap-2 bg-white text-blue-600 px-8 py-4 rounded-xl font-bold text-lg hover:bg-blue-50 transition-colors shadow-lg active:scale-95">
+                    <Link
+                        to="/patient"
+                        className="flex items-center gap-2 bg-white text-blue-600 px-8 py-4 rounded-xl font-bold text-lg hover:bg-blue-50 transition-colors shadow-lg active:scale-95"
+                    >
                         <PhoneCall className="w-5 h-5" />
                         Request Ambulance Now
-                    </button>
+                    </Link>
                 </div>
             </div>
         </div>

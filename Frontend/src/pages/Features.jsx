@@ -38,22 +38,22 @@ const Features = () => {
         <div className="min-h-[calc(100vh-70px)] bg-white py-16 px-6">
             <div className="max-w-6xl mx-auto">
                 <div className="text-center mb-16">
-                    <h1 className="text-4xl md:text-5xl font-extrabold text-surface-900 mb-4">
+                    <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 mb-4">
                         System <span className="text-blue-600">Features</span>
                     </h1>
-                    <p className="text-lg text-surface-600 max-w-2xl mx-auto">
+                    <p className="text-lg text-gray-600 max-w-2xl mx-auto">
                         AmbuTrack combines real-time networking with modern web mapping to create a highly efficient emergency dispatch engine.
                     </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
                     {features.map((feature, index) => (
-                        <div key={index} className="flex flex-col items-center text-center p-6 rounded-2xl hover:bg-surface-50 border border-transparent hover:border-surface-200 transition-all duration-300">
-                            <div className="bg-surface-100 p-4 rounded-2xl mb-6 shadow-sm">
+                        <div key={index} className="flex flex-col items-center text-center p-6 rounded-2xl hover:bg-gray-50 border border-gray-50 hover:border-gray-200 transition-all duration-300">
+                            <div className="bg-gray-100 p-4 rounded-2xl mb-6 shadow-sm">
                                 {feature.icon}
                             </div>
-                            <h3 className="text-2xl font-bold text-surface-900 mb-3">{feature.title}</h3>
-                            <p className="text-surface-600 leading-relaxed">
+                            <h3 className="text-2xl font-bold text-grey-900 mb-3">{feature.title}</h3>
+                            <p className="text-gray-600 leading-relaxed">
                                 {feature.description}
                             </p>
                         </div>

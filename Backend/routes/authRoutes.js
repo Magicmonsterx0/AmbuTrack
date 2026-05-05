@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
-// 🟢 REGISTER ROUTE (Used by Admins to add new drivers)
+//REGISTER ROUTE (Used by Admins to add new drivers)
 router.post('/register', async (req, res) => {
     try {
         const { name, email, password, role, plateNumber } = req.body;
@@ -42,7 +42,7 @@ router.post('/register', async (req, res) => {
 
 });
 
-// 🔵 LOGIN ROUTE (Used by Drivers to access the terminal)
+//LOGIN ROUTE (Used by Drivers to access the terminal)
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
